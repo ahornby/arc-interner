@@ -106,8 +106,13 @@ impl<T: Eq + Hash + Send + Sync + 'static> ArcIntern<T> {
         };
 
         let m: &Container<T> = boxed.value().downcast_ref::<Container<T>>().unwrap();
+        if let Some(b) = m.get(&val) {
+            // Fast path, read guard only, no new Arc
+            return ArcIntern { arc: b.key().clone() }
+        }
+        // Slower path, write guard acquired, new Arc
         let b = m.entry(Arc::new(val)).or_insert(());
-        return ArcIntern { arc: b.key().clone() };
+        ArcIntern { arc: b.key().clone() }
     }
     /// See how many objects have been interned.  This may be helpful
     /// in analyzing memory use.
@@ -315,6 +320,9 @@ mod tests {
                     for _i in 0..100_000 {
                         let interned1 = ArcIntern::new(TestStruct("foo".to_string(), 5, drop_check.clone()));
                         let _interned2 = ArcIntern::new(TestStruct("bar".to_string(), 10, drop_check.clone()));
+                        let interned3 = ArcIntern::new(TestStruct("bar".to_string(), 10, drop_check.clone()));
+                        let refcount = interned3.refcount();
+                        assert!(refcount >= 2, "refcount was {}, expected >=2", refcount);
                         let mut m = HashMap::new();
                         // force some hashing
                         m.insert(interned1, ());
