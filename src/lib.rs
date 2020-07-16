@@ -135,14 +135,18 @@ impl<T: Eq + Hash + Send + Sync + 'static> Clone for ArcIntern<T> {
 
 impl<T: Eq + Hash + Send + Sync> Drop for ArcIntern<T> {
     fn drop(&mut self) {
-        if let Some(m) = CONTAINER.get().and_then(|type_map| type_map.get(&TypeId::of::<T>())) {
-            let m: &Container<T> = m.downcast_ref::<Container<T>>().unwrap();
-            m.remove_if(&self.arc, |k, _v| {
-                // If the reference count is 2, then the only two remaining references
-                // to this value are held by `self` and the hashmap and we can safely
-                // deallocate the value.
-                Arc::strong_count(&k) == 2
-            });
+        // If the reference count is 2, then the only two remaining references
+        // to this value are held by `self` and the hashmap and we can safely
+        // deallocate the value, providing we check again inside the guard.
+        if Arc::strong_count(&self.arc) == 2 {
+            if let Some(m) = CONTAINER.get().and_then(|type_map| type_map.get(&TypeId::of::<T>())) {
+                let m: &Container<T> = m.downcast_ref::<Container<T>>().unwrap();
+                m.remove_if(&self.arc, |k, _v| {
+                    // Test again inside the write guard incase there was a race with
+                    // ::new() or ::clone() that means we should not remove
+                    Arc::strong_count(&k) == 2
+                });
+            }
         }
     }
 }
